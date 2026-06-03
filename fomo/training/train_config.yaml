@@ -1,0 +1,21 @@
+# Training Configuration for FOMO
+
+# Data configuration
+data_path: "data/coco128/images/train2017"
+
+
+# Model configuration
+size: "s"                                    # Model size (YOLOX: "n","t","s","m","l","x"; yolo9: "t","s","m","c")
+version: "x"                                 # Model version: "x", "9"
+pretrained_weights: "weights/FOMOXs.pt" # Path to pretrained weights (optional)
+
+
+# Training parameters
+epochs: 5
+batch_size: 8
+lr0: 0.001
+weight_decay: 0.0005
+num_classes: 80
+workers: 0
+output_dir: "runs/"
+save_period: 1 # Save checkpoint period (in epochs)

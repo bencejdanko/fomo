@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Linting
+.ruff_cache/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tests/e2e/rf5_results/
+tests/output/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+
+# Local AI tooling state
+.claude/settings.local.json
+.claude/worktrees/
+
+# Project
+temporary/
+runs/
+/data/
+*.log
+sample_images*/
+
+# Model weights & exports
+*.pt
+*.pth
+*.data
+*.cache
+*.engine
+*.onnx
+*.torchscript
+
+weights/

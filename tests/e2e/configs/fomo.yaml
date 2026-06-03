@@ -1,0 +1,39 @@
+# RF5 - FOMO family
+model_type: fomo
+
+# Size-specific defaults (can override via CLI)
+sizes:
+  s: {imgsz: 96, weights: FOMOs.pt}
+  m: {imgsz: 192, weights: FOMOm.pt}
+  l: {imgsz: 224, weights: FOMOl.pt}
+
+# Training
+epochs: 10
+batch_size: 8
+optimizer: adam
+lr0: 0.0003
+weight_decay: 0.0
+
+# Scheduler
+scheduler: cos
+warmup_epochs: 0
+warmup_lr_start: 0.0
+no_aug_epochs: 0
+min_lr_ratio: 0.05
+
+# Augmentation
+mosaic_prob: 0.0
+mixup_prob: 0.0
+hsv_prob: 0.0
+flip_prob: 0.0
+degrees: 0.0
+translate: 0.0
+shear: 0.0
+
+# Training options
+ema: false
+amp: false
+patience: 0
+eval_interval: 1
+save_period: 10
+workers: 2
