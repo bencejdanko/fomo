@@ -1,6 +1,6 @@
 [project]
 name = "fomo-edge-ai"
-version = "0.0.11"
+version = "0.0.12"
 description = "FOMO - Lightweight Point Localization models."
 readme = "README.md"
 requires-python = ">=3.10"
