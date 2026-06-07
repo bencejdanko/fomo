@@ -149,3 +149,89 @@ class FOMOYOLODataset(Dataset):
 
         img_info = (self.input_size, self.input_size)
         return img_tensor, grid, img_info, idx
+
+
+# ---------------------------------------------------------------------------
+# Grid-target encoding for augmented centers
+# ---------------------------------------------------------------------------
+
+def _boxes_cxcy_to_grid(
+    boxes_cxcy: np.ndarray,
+    classes: np.ndarray,
+    input_size: int,
+    grid_size: int,
+) -> torch.Tensor:
+    """Encode cxcy-pixel box centers as a FOMO grid target tensor.
+
+    Args:
+        boxes_cxcy: (N, 2) float array — cx, cy in *input_size* pixel coords.
+        classes: (N,) int array — class index (0-based foreground).
+        input_size: Model input resolution (square).
+        grid_size: Output grid side length.
+
+    Returns:
+        LongTensor of shape (grid_size, grid_size).
+        Value 0 = background, 1..nc = foreground class index.
+    """
+    grid = torch.zeros((grid_size, grid_size), dtype=torch.long)
+    for (cx, cy), cls in zip(boxes_cxcy, classes):
+        gx = int((cx / input_size) * grid_size)
+        gy = int((cy / input_size) * grid_size)
+        gx = min(max(gx, 0), grid_size - 1)
+        gy = min(max(gy, 0), grid_size - 1)
+        grid[gy, gx] = int(cls) + 1  # +1 because 0 = background
+    return grid
+
+
+# ---------------------------------------------------------------------------
+# Wrapper dataset for augmented targets
+# ---------------------------------------------------------------------------
+
+class FOMOAugmentedDataset(Dataset):
+    """Dataset wrapper for FOMO that consumes YOLOX-style augmented targets
+
+    (which are BGR images and targets in [class_id, cx, cy, w, h] format)
+    and outputs normalized RGB tensors and grid targets.
+    """
+
+    def __init__(
+        self,
+        augmented_dataset: Dataset,
+        input_size: int,
+        grid_size: int,
+    ) -> None:
+        self.dataset = augmented_dataset
+        self.input_size = input_size
+        self.grid_size = grid_size
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int):
+        # Retrieve the augmented item from MosaicMixupDataset
+        img, targets, img_info, img_id = self.dataset[idx]
+
+        # 1. Convert img (numpy BGR float32 CHW, range [0, 255]) to RGB, normalize to [-1, 1]
+        img_rgb = img[::-1, :, :]  # BGR -> RGB
+        img_normalized = (img_rgb / 255.0 - MEAN[:, None, None]) / STD[:, None, None]
+        img_tensor = torch.from_numpy(np.ascontiguousarray(img_normalized, dtype=np.float32))
+
+        # 2. Filter valid targets (where w > 0)
+        # targets shape is (max_labels, 5) with format [class_id, cx, cy, w, h]
+        valid_mask = targets[:, 3] > 0
+        valid_targets = targets[valid_mask]
+
+        # 3. Encode to FOMO grid target
+        if len(valid_targets) > 0:
+            classes = valid_targets[:, 0].astype(np.int64)
+            boxes_cxcy = valid_targets[:, 1:3]
+            grid = _boxes_cxcy_to_grid(boxes_cxcy, classes, self.input_size, self.grid_size)
+        else:
+            grid = torch.zeros((self.grid_size, self.grid_size), dtype=torch.long)
+
+        return img_tensor, grid, img_info, img_id
+
+    def close_mosaic(self) -> None:
+        if hasattr(self.dataset, "close_mosaic"):
+            self.dataset.close_mosaic()
+

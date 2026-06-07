@@ -199,7 +199,65 @@ class FOMOTrainer(BaseTrainer):
                 dataset_nc,
             )
 
-        train_ds = FOMOYOLODataset(train_img_files, train_label_files, input_size, grid_size)
+        # Check if any augmentation is enabled
+        any_aug = (
+            self.config.mosaic_prob > 0
+            or self.config.mixup_prob > 0
+            or self.config.hsv_prob > 0
+            or self.config.flip_prob > 0
+            or self.config.degrees > 0
+            or self.config.translate > 0
+            or self.config.shear > 0
+        )
+
+        if any_aug:
+            from .dataset import FOMOAugmentedDataset
+            from ...data.dataset import YOLODataset
+            from ...training.augment import TrainTransform, MosaicMixupDataset
+
+            if is_main_process():
+                logger.info("FOMO Training: Data augmentation enabled.")
+                logger.info(f"  mosaic_prob: {self.config.mosaic_prob}")
+                logger.info(f"  mixup_prob: {self.config.mixup_prob}")
+                logger.info(f"  flip_prob: {self.config.flip_prob}")
+                logger.info(f"  hsv_prob: {self.config.hsv_prob}")
+
+            base_train_ds = YOLODataset(
+                img_files=train_img_files,
+                label_files=train_label_files,
+                img_size=(input_size, input_size),
+                preproc=None,
+            )
+
+            preproc = TrainTransform(
+                max_labels=50,
+                flip_prob=self.config.flip_prob,
+                hsv_prob=self.config.hsv_prob,
+            )
+
+            augmented_train_ds = MosaicMixupDataset(
+                dataset=base_train_ds,
+                img_size=(input_size, input_size),
+                mosaic=self.config.mosaic_prob > 0,
+                preproc=preproc,
+                degrees=self.config.degrees,
+                translate=self.config.translate,
+                mosaic_scale=self.config.mosaic_scale,
+                mixup_scale=self.config.mixup_scale,
+                shear=self.config.shear,
+                enable_mixup=self.config.mixup_prob > 0,
+                mosaic_prob=self.config.mosaic_prob,
+                mixup_prob=self.config.mixup_prob,
+            )
+
+            train_ds = FOMOAugmentedDataset(
+                augmented_dataset=augmented_train_ds,
+                input_size=input_size,
+                grid_size=grid_size,
+            )
+        else:
+            train_ds = FOMOYOLODataset(train_img_files, train_label_files, input_size, grid_size)
+
         val_ds = FOMOYOLODataset(val_img_files or [], val_label_files or [], input_size, grid_size)
         return train_ds, val_ds
 

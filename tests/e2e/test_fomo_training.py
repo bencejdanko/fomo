@@ -57,13 +57,28 @@ def download_fomo_dataset():
     """
     if DATASET_ROOT.exists() and (DATASET_ROOT / "data.yaml").exists():
         return
+    
+    # Clean up any partial state
+    import shutil
+    if DATASET_ROOT.exists():
+        shutil.rmtree(DATASET_ROOT, ignore_errors=True)
+        
     print(f"\nDownloading dataset {HF_REPO} from HuggingFace ...")
     DATASET_ROOT.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["git", "clone", f"https://huggingface.co/datasets/{HF_REPO}", str(DATASET_ROOT)],
         check=True,
     )
-    print(f"Dataset downloaded to {DATASET_ROOT}")
+    
+    # Extract zip archive if present in the repo
+    zip_path = DATASET_ROOT / "sjsu-headcount-scene-1.zip"
+    if zip_path.exists():
+        import zipfile
+        print(f"Extracting {zip_path.name} to {DATASET_ROOT} ...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(DATASET_ROOT)
+            
+    print(f"Dataset downloaded and prepared at {DATASET_ROOT}")
 
 
 def patch_data_yaml():
@@ -188,3 +203,103 @@ def test_fomo_training_smoke(fomo_dataset, tmp_path):
         timeout=1800,
     )
     cuda_cleanup()
+
+
+@requires_cuda
+def test_fomo_training_smoke_augmented(fomo_dataset, tmp_path):
+    """2-epoch smoke train on the FOMO dataset with data augmentations enabled.
+
+    Uses ``run_direct_subprocess`` so CUDA state is isolated from other tests.
+    Asserts:
+      - Both epochs complete under augmentations and loss decreases
+      - ``last.pt`` / ``best.pt`` written with valid checkpoint schema
+      - Trained checkpoint loads via the FOMO factory (auto-detects size)
+      - Inference on the reloaded model returns a valid ``result.points`` object
+    """
+    dataset_data_yaml = str(fomo_dataset / "data.yaml")
+
+    run_direct_subprocess(
+        f"""
+        import torch
+        from pathlib import Path
+
+        from fomo import FOMO
+        from fomo.models.fomo.model import FOMO
+        from fomo.utils.serialization import validate_checkpoint_metadata
+
+        # --- Build fresh FOMO-s (no pretrained weights) ---
+        model = FOMO(model_path=None, size="s", nb_classes=1, device="cpu")
+        assert model.family == "fomo"
+        assert model.size == "s"
+        assert model.input_size == 96
+
+        # --- Train with augmentations ---
+        results = model.train(
+            allow_experimental=True,
+            data=r"{dataset_data_yaml}",
+            epochs={FOMO_EPOCHS},
+            batch={FOMO_BATCH},
+            lr0=3e-4,
+            eval_interval=1,
+            workers=2,
+            device="cuda",
+            project=r"{str(tmp_path)}",
+            name="smoke_s_aug",
+            exist_ok=True,
+            patience=0,
+            mosaic_prob=1.0,
+            flip_prob=0.5,
+            hsv_prob=1.0,
+        )
+
+        # --- Loss decreased ---
+        epoch_losses = results["epoch_losses"]
+        assert len(epoch_losses) == {FOMO_EPOCHS}, (
+            f"Expected {FOMO_EPOCHS} epoch losses, got {{len(epoch_losses)}}"
+        )
+        first_loss, last_loss = epoch_losses[0], epoch_losses[-1]
+        assert last_loss < first_loss, (
+            f"Loss did not decrease: {{first_loss:.4f}} → {{last_loss:.4f}}"
+        )
+        print(f"  loss: epoch1={{first_loss:.4f}}, epoch2={{last_loss:.4f}}", flush=True)
+
+        # --- Checkpoints written ---
+        save_dir = Path(results["save_dir"])
+        weights_dir = save_dir / "weights"
+        last_pt = weights_dir / "last.pt"
+        assert last_pt.exists(), f"last.pt not found at {{last_pt}}"
+
+        best_pt = weights_dir / "best.pt"
+        ckpt_path = best_pt if best_pt.exists() else last_pt
+
+        # --- Schema valid ---
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        errors = validate_checkpoint_metadata(ckpt, strict=False)
+        assert errors == [], f"Checkpoint schema errors: {{errors}}"
+        assert ckpt["task"] == "point"
+        assert ckpt["model_family"] == "fomo"
+        assert ckpt["size"] == "s"
+        print(f"  checkpoint schema OK: task={{ckpt['task']}}, size={{ckpt['size']}}", flush=True)
+
+        # --- Factory reload + inference ---
+        from fomo import FOMO
+        import numpy as np
+        from PIL import Image
+
+        trained = FOMO(str(ckpt_path), device="cpu")
+        assert trained.family == "fomo"
+        assert trained.size == "s"
+
+        arr = np.zeros((96, 96, 3), dtype=np.uint8)
+        arr[40:50, 40:50] = 200
+        result = trained.predict(Image.fromarray(arr), conf=0.01, max_det=20)
+        assert result.boxes is None, "FOMO must not produce boxes"
+        assert result.points is not None
+        print(f"  inference OK — n_points={{len(result)}}", flush=True)
+
+        print("\\n✓ FOMO augmented training smoke test PASSED", flush=True)
+        """,
+        timeout=1800,
+    )
+    cuda_cleanup()
+

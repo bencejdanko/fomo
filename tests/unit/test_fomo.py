@@ -379,3 +379,64 @@ def test_point_validator_hungarian_matching_all_inf():
     assert validator.total_fp == 1
     assert validator.total_fn == 1
 
+
+def test_fomo_augmented_dataset_and_trainer(tmp_path):
+    """Test that FOMOAugmentedDataset properly normalizes and maps boxes to a grid,
+    and that FOMOTrainer enables augmentations when parameters are set.
+    """
+    import yaml
+    import numpy as np
+    from PIL import Image as PILImage
+    from fomo.models.fomo.trainer import FOMOTrainer
+    from fomo.models.fomo.dataset import FOMOAugmentedDataset, _boxes_cxcy_to_grid
+    
+    # 1. Create a dummy dataset
+    img_dir = tmp_path / "images" / "train"
+    lbl_dir = tmp_path / "labels" / "train"
+    img_dir.mkdir(parents=True)
+    lbl_dir.mkdir(parents=True)
+    # create a small dummy image
+    img_arr = np.random.randint(0, 256, (96, 96, 3), dtype=np.uint8)
+    PILImage.fromarray(img_arr).save(img_dir / "img0.jpg")
+    # write one label row: class_id cx cy w h (normalized)
+    (lbl_dir / "img0.txt").write_text("0 0.5 0.5 0.2 0.2")
+
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(yaml.dump({
+        "path": str(tmp_path),
+        "train": "images/train",
+        "val": "images/train",
+        "nc": 1,
+        "names": {0: "person"},
+    }))
+
+    wrapper = FOMO(model_path=None, size="s", nb_classes=1, device="cpu")
+    
+    # Instantiate trainer with augmentation parameters enabled
+    trainer = FOMOTrainer(
+        wrapper.model, wrapper_model=wrapper,
+        data=str(data_yaml), epochs=1, imgsz=96,
+        mosaic_prob=1.0, flip_prob=0.5, hsv_prob=1.0
+    )
+    
+    train_ds, val_ds = trainer._build_yolo_datasets(96, 12)
+    
+    # Verify train_ds is wrapped with FOMOAugmentedDataset
+    assert isinstance(train_ds, FOMOAugmentedDataset)
+    
+    # Verify val_ds is NOT wrapped (retains standard FOMOYOLODataset)
+    from fomo.models.fomo.dataset import FOMOYOLODataset
+    assert isinstance(val_ds, FOMOYOLODataset)
+    
+    # Fetch a sample from the augmented dataset
+    img_tensor, grid, img_info, img_id = train_ds[0]
+    
+    # Checks
+    assert img_tensor.shape == (3, 96, 96)
+    assert grid.shape == (12, 12)
+    # Pixels must be normalized to approx [-1.0, 1.0]
+    assert img_tensor.min() >= -1.1 and img_tensor.max() <= 1.1
+    # Grid should contain at least background (0) or foreground (1)
+    assert (grid >= 0).all() and (grid <= 1).all()
+
+
