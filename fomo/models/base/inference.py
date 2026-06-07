@@ -91,7 +91,7 @@ class InferenceRunner:
         Returns:
             Results, list of Results, or generator of Results (video + stream).
         """
-        kwargs = normalize_predict_kwargs(kwargs, passthrough={"num_select"})
+        kwargs = normalize_predict_kwargs(kwargs, passthrough={"num_select", "nms_radius"})
         if device is not None:
             self._set_device(device)
 
